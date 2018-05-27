@@ -1,2 +1,3 @@
-# esp8266-karma
-Karma for the ESP8266.
+# Karma on the ESP8266
+
+Based off pulkin/esp8626-injection-example.
