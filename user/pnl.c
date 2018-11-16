@@ -45,7 +45,9 @@ void storePNL(uint8_t *mac, char *ssid, uint8_t ssid_size)
   return;
 }
 
-void beaconPNL(uint8_t *mac,uint16_t seqn)
+uint16_t intl_seqn = 0x0;
+
+void beaconPNL(uint8_t *mac,uint16_t seqn,uint8_t chan)
 {
   uint8_t beacon_buf[256];
   char ssid[50];
@@ -59,7 +61,7 @@ void beaconPNL(uint8_t *mac,uint16_t seqn)
       
       os_printf("This MAC knows SSID %s\n",ssid);
       char beacon_resp[256];
-      int size = beaconresp(beacon_resp, mac, fake_ap_addr, seqn, pnlArray[i].ssid_size, pnlArray[i].ssid_buf);
+      int size = beaconresp(beacon_resp, mac, fake_ap_addr, intl_seqn++, pnlArray[i].ssid_size, pnlArray[i].ssid_buf,chan);
       wifi_send_pkt_freedom(beacon_resp,size,0);
     }
   }

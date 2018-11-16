@@ -5,6 +5,8 @@
 
 uint8_t forge_timestamp[8] = {0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0};
 
+#define OVERRIDE_DA 1
+
 int saveForgedTimestamp(uint8_t *timestamp)
 {
   int i = 0;
@@ -70,13 +72,46 @@ int tag_supportedRates(uint8_t *buf,int posn)
   return l;
 }
 
-int tag_supportedChannels(uint8_t *buf,int posn)
+int tag_RSN(uint8_t *buf,int posn)
+{
+  uint8_t *internal_buf = buf + posn;
+  int l = 0;
+  internal_buf[++l] = 0x30;
+  internal_buf[++l] = 0x18;
+  internal_buf[++l] = 0x01;
+  internal_buf[++l] = 0x00;
+  internal_buf[++l] = 0x00;
+  internal_buf[++l] = 0x0f;
+  internal_buf[++l] = 0xac;
+  internal_buf[++l] = 0x02;
+  internal_buf[++l] = 0x02;
+  internal_buf[++l] = 0x00;
+  internal_buf[++l] = 0x00;
+  internal_buf[++l] = 0x0f;
+  internal_buf[++l] = 0xac;
+  internal_buf[++l] = 0x02;
+  internal_buf[++l] = 0x00;
+  internal_buf[++l] = 0x0f;
+  internal_buf[++l] = 0xac;
+  internal_buf[++l] = 0x04;
+  internal_buf[++l] = 0x01;
+  internal_buf[++l] = 0x00;
+  internal_buf[++l] = 0x00;
+  internal_buf[++l] = 0x0f;
+  internal_buf[++l] = 0xac;
+  internal_buf[++l] = 0x02;
+  internal_buf[++l] = 0x00;
+  internal_buf[++l] = 0x00;
+  return l;
+}
+
+int tag_supportedChannels(uint8_t *buf,int posn,uint8_t channel)
 {
   uint8_t *internal_buf = buf + posn;
   int l = 0;
   internal_buf[++l] = 0x03;
   internal_buf[++l] = 0x01;
-  internal_buf[++l] = 0x04; // DSSS Current Channel
+  internal_buf[++l] = channel; // DSSS Current Channel
   return l;
 }
 
@@ -114,7 +149,7 @@ int tag_extendedSupportedRates(uint8_t *buf, int posn)
   return l;  
 }
 
-uint16_t beaconresp(uint8_t *buf, uint8_t *client, uint8_t *ap, uint16_t seq,uint8_t ssid_len, char *ssid)
+uint16_t beaconresp(uint8_t *buf, uint8_t *client, uint8_t *ap, uint16_t seq,uint8_t ssid_len, char *ssid,uint8_t chan)
 {
     int i=0;
 
@@ -128,23 +163,34 @@ uint16_t beaconresp(uint8_t *buf, uint8_t *client, uint8_t *ap, uint16_t seq,uin
     // Sender
     for (i=0; i<6; i++) buf[i+10] = ap[i];
     for (i=0; i<6; i++) buf[i+16] = ap[i];
+    if(OVERRIDE_DA)
+    {
+      for (i=0; i<6; i++) buf[i+4] = 0xFF;
+      /*
+      for (i=0; i<6; i++) buf[i+10] = 0xFF;
+      for (i=0; i<6; i++) buf[i+16] = 0xFF;
+      */
+    }
     // Seq_n
     buf[22] = seq % 0x100; // bug in original karma source
     buf[23] = seq / 0x100;
     for(i = 0;i < 8;i++) buf[i+24] = forge_timestamp[i]; // fuck the timestamp
     buf[32] = 0x64; // beacon interval - copied from wireshark
     buf[33] = 0x00;
-    buf[34] = 0x01; // wifi capabilities
-    buf[35] = 0x00;
+    buf[34] = 0x01;
+    buf[35] = 0x04;
+    // buf[34] = 0x31; // wifi capabilities
+    // buf[35] = 0x04;
     int newPosn = 35 + tag_supportedSSID(buf,35,ssid,ssid_len);
     newPosn += tag_supportedRates(buf,newPosn);
-    newPosn += tag_supportedChannels(buf,newPosn);
+    newPosn += tag_supportedChannels(buf,newPosn,chan);
     newPosn += tag_ERPInformation(buf,newPosn);
     newPosn += tag_extendedSupportedRates(buf,newPosn);
+    newPosn += tag_RSN(buf,newPosn);
     return newPosn + 1;
 }
 
-uint16_t proberesp(uint8_t *buf, uint8_t *client, uint8_t *ap, uint16_t seq,uint8_t ssid_len, char *ssid)
+uint16_t proberesp(uint8_t *buf, uint8_t *client, uint8_t *ap, uint16_t seq,uint8_t ssid_len, char *ssid,uint8_t chan)
 {
     int i=0;
 
@@ -158,18 +204,24 @@ uint16_t proberesp(uint8_t *buf, uint8_t *client, uint8_t *ap, uint16_t seq,uint
     // Sender
     for (i=0; i<6; i++) buf[i+10] = ap[i];
     for (i=0; i<6; i++) buf[i+16] = ap[i];
+    // if(OVERRIDE_DA)
+    // {
+    //   for (i=0; i<6; i++) buf[i+10] = 0xFF;
+    //  for (i=0; i<6; i++) buf[i+16] = 0xFF;
+    // }
     // Seq_n
     buf[22] = seq % 0x100; // bug in original karma source
     buf[23] = seq / 0x100;
     for(i = 0;i < 8;i++) buf[i+24] = forge_timestamp[i]; // fuck the timestamp
     buf[32] = 0x64; // beacon interval - copied from wireshark
     buf[33] = 0x00;
-    buf[34] = 0x01; // wifi capabilities
+    buf[34] = 0x31; // wifi capabilities
     buf[35] = 0x00;
     int newPosn = 35 + tag_supportedSSID(buf,35,ssid,ssid_len);
     newPosn += tag_supportedRates(buf,newPosn);
-    newPosn += tag_supportedChannels(buf,newPosn);
+    newPosn += tag_supportedChannels(buf,newPosn,chan);
     newPosn += tag_ERPInformation(buf,newPosn);
     newPosn += tag_extendedSupportedRates(buf,newPosn);
+    newPosn += tag_RSN(buf,newPosn);
     return newPosn + 1;
 }

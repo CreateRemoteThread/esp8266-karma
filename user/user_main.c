@@ -12,8 +12,8 @@
 os_event_t    user_procTaskQueue[user_procTaskQueueLen];
 
 #define CONFIG_DOGMA 1
-#define CHANNEL_HOP_INTERVAL 2500
-uint8_t channel = 7;
+#define CHANNEL_HOP_INTERVAL 60000
+uint8_t channel = 6;
 uint16_t seq_n = 0;
 uint8_t packet_buffer[64];
 static volatile os_timer_t chanhop_timer;
@@ -107,6 +107,9 @@ promisc_cb(uint8_t *buf, uint16_t len)
         {
             i = 0;
             os_printf("ASSOCIATE REQUEST to %02x:%02x:%02x:%02x:%02x:%02x\n",sniffer->buf[i+4],sniffer->buf[i+5],sniffer->buf[i+6],sniffer->buf[i+7],sniffer->buf[i+8],sniffer->buf[i+9]);
+            uint16_t seqnPacket = (((unsigned int)sniffer->buf[23] << 8) + sniffer->buf[22] ) >> 4;
+            uint16_t newSeqnPacket = ((seqnPacket + 1) << 4) & 0xFFF0;
+            // assocresp(sniffer->buf+10,newSeqnpacket);
         }
 	      else if(frameType == TYPE_MANAGEMENT && frameSubType == SUBTYPE_PROBE_REQUEST)
 	      {
@@ -117,7 +120,7 @@ promisc_cb(uint8_t *buf, uint16_t len)
             os_printf("BROADCAST PROBE from %02x:%02x:%02x:%02x:%02x:%02x\n",sniffer->buf[i+4],sniffer->buf[i+5],sniffer->buf[i+6],sniffer->buf[i+7],sniffer->buf[i+8],sniffer->buf[i+9]);
             uint16_t seqnPacket = (((unsigned int)sniffer->buf[23] << 8) + sniffer->buf[22] ) >> 4;
             uint16_t newSeqnPacket = ((seqnPacket + 1) << 4) & 0xFFF0;
-            beaconPNL(sniffer->buf + 10,newSeqnPacket);
+            beaconPNL(sniffer->buf + 10,newSeqnPacket,channel);
           }
           else{
             char *pkt_buf = (char *)os_malloc(256);
@@ -132,8 +135,8 @@ promisc_cb(uint8_t *buf, uint16_t len)
             i = 6;
             uint16_t seqnPacket = (((unsigned int)sniffer->buf[23] << 8) + sniffer->buf[22] ) >> 4;
             uint16_t newSeqnPacket = ((seqnPacket + 1) << 4) & 0xFFF0;
-            uint16_t probeRespSize = proberesp(pkt_buf,(sniffer->buf + 10),forge_ap,newSeqnPacket,ssidLength,ssid);
-            uint16_t beaconRespSize = beaconresp(beacon_buf,(sniffer->buf + 10),forge_ap,newSeqnPacket,ssidLength,ssid);
+            uint16_t probeRespSize = proberesp(pkt_buf,(sniffer->buf + 10),forge_ap,newSeqnPacket,ssidLength,ssid,channel);
+            uint16_t beaconRespSize = beaconresp(beacon_buf,(sniffer->buf + 10),forge_ap,newSeqnPacket,ssidLength,ssid,channel);
             ssid[x] = 0;
             storePNL(sniffer->buf + 10,ssid,ssidLength);
             os_printf("DIRECTED PROBE REQUEST from %02x:%02x:%02x:%02x:%02x:%02x (SSID:%s) (SEQN:%d)\n",sniffer->buf[i+4],sniffer->buf[i+5],sniffer->buf[i+6],sniffer->buf[i+7],sniffer->buf[i+8],sniffer->buf[i+9],ssid,seqnPacket);
@@ -144,6 +147,10 @@ promisc_cb(uint8_t *buf, uint16_t len)
               if (retval != 0)
               {
                 os_printf("beacon fail\n");
+              }
+              else
+              {
+                os_printf("beacon ok\n");
               }
             }
             int retval = wifi_send_pkt_freedom(pkt_buf,probeRespSize,0);
@@ -198,8 +205,10 @@ user_init()
     initPNL();
     wifi_set_opmode(STATION_MODE);
     // uncomment to channel hop
+    /*
     os_timer_disarm(&chanhop_timer);
     os_timer_setfn(&chanhop_timer, (os_timer_func_t *) channelhop, NULL);
     os_timer_arm(&chanhop_timer, CHANNEL_HOP_INTERVAL, 1);
+    */
     system_init_done_cb(sniffer_system_init_done);
 }
