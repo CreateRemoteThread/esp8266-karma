@@ -18,7 +18,7 @@ XTENSA_TOOLS_ROOT ?= ~/software/esp-sdk/esp-open-sdk/xtensa-lx106-elf/bin
 SDK_BASE	?= $(CURDIR)/esp_iot_sdk_v1.3.0
 
 #Esptool.py path and port
-ESPTOOL		?= esptool.py
+ESPTOOL		?= ~/software/esp-sdk/esptool/esptool.py
 ESPPORT		?= /dev/ttyUSB0
 
 # name for the target project
@@ -62,7 +62,7 @@ LD		:= $(XTENSA_TOOLS_ROOT)/xtensa-lx106-elf-gcc
 ####
 #### no user configurable options below here
 ####
-FW_TOOL		?= esptool.py
+FW_TOOL		?= ~/software/esp-sdk/esptool/esptool.py
 SRC_DIR		:= $(MODULES)
 BUILD_DIR	:= $(addprefix $(BUILD_BASE)/,$(MODULES))
 
